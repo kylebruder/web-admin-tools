@@ -17,35 +17,11 @@ file2=`echo $RANDOM | sha1sum | cut -d ' ' -f 1`".txt"
 ##### End Static variables #####################################################
 
 ##### Begin custom variables ###################################################
-
-## Specify your path convention here ##
-# This script assumes a multiple user virtual host configuration for a webserver
-# For example the root path of www.foo.bar could be: 
-# /home/foo/sites/www.foo.bar
-# $user home should be the parent directory of $sitesdir
-userhome="/users/$user/home/$user"
-# $sitesdir should begin with $userhome in most cases
-sitesdir="$userhome/sites"
-
-## Specify the absolute paths to the desired archive filenames ################
-# This script operates in 2 modes depending on the agruments it is passed
-# It can either backup a specific site or all of the sites in a user's directory
-# In the case of a single site this will be the archive's filename
-tarfile_site="$sitesdir/$user-$site-$date-backup.tar.gz"
-# in the case of all of a user's sites this will be the archive's filename
-tarfile_all="$userhome/$user-$date-backup.tar.gz"
-# If you are using notify(), this is destination email address 
-email="kbruder@cloudbrigade.com"
-# This is the body of the email
-# To omit set them to ""
-# Example: reminder=""
-notice="NOTICE - A backup was taken for user on:' `date` by `who`."
-reminder="REMINDER - Don't forget to remove old backups!"
-# If you are using aws_s3(), this is the bucket name and path
-s3_path="s3://scratchspacebackups/archive/"
-##### End custom variables ###################################################
-
+# This script is configured by editing cmsbacker.conf
+conf="cmsbacker.conf"
+source $conf
 ##### Begin main function ######################################################
+
 ## Choose which functions you would like to run here ##
 ## See the comments inside of the funtions for details
 # The recommended order is:
@@ -55,6 +31,7 @@ s3_path="s3://scratchspacebackups/archive/"
 # aws_s3
 # notify
 main() {
+	check_disk
 	check_args
 	backup
 	show_complete
@@ -64,6 +41,13 @@ main() {
 ##### End main function #######################################################
 
 ##### Begin functions #########################################################
+check_disk() {
+	disk_use=`df -k | grep $disk | tr -s ' ' | cut -d" " -f 5 | cut -d '%' -f 1`
+        if (( $disk_use > $disk_max_percent )); then
+                echo "The disk is too full. It is at "$disk_use"% capacity. Please make some space."
+                exit
+        fi
+}
 check_args() {
 # Check the arguments passed from the CLI
 	if (( $arg_count < 1 )); then
