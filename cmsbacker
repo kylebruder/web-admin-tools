@@ -1,81 +1,124 @@
 #!/bin/bash
-# A shell wrapper to use cmsdump.pl to do a final dump of an Apterburner customer's site or sites.
+# A shell wrapper to use cmsdump.pl to do a final dump of an Apterburner user's site or sites.
 # By kbruder@cloudbrigade.com
-# Last modified 12/03/2018
+# Last modified 12/05/2018
 
-# Declare variables
-customer=$1
+##### Begin Static variables ###################################################
+# Change these with caution
+user=$1
 site=$2
 date=`date +%Y-%m-%d`
 arg_count=$#
-# Specify your path convention here
-userhome="/users/$customer/home/$customer"
-sitesdir="$userhome/sites"
-tarfile_site="$sitesdir/$customer-$site-$date-final.tar.gz"
-tarfile_all="$userhome/$customer-$date-final.tar.gz"
 # Randomize the config list names to avoid clobbering existing files
+# It is best to leave these as they are unless you want to specify a path
+# Example : file1="/tmp/"`echo $RANDOM | sha1sum | cut -d ' ' -f 1`".txt" 
 file1=`echo $RANDOM | sha1sum | cut -d ' ' -f 1`".txt"
 file2=`echo $RANDOM | sha1sum | cut -d ' ' -f 1`".txt"
+##### End Static variables #####################################################
+
+##### Begin custom variables ###################################################
+
+## Specify your path convention here ##
+# This script assumes a multiple user virtual host configuration for a webserver
+# For example the root path of www.foo.bar could be: 
+# /home/foo/sites/www.foo.bar
+# $user home should be the parent directory of $sitesdir
+userhome="/users/$user/home/$user"
+# $sitesdir should begin with $userhome in most cases
+sitesdir="$userhome/sites"
+
+## Specify the absolute paths to the desired archive filenames ################
+# This script operates in 2 modes depending on the agruments it is passed
+# It can either backup a specific site or all of the sites in a user's directory
+# In the case of a single site this will be the archive's filename
+tarfile_site="$sitesdir/$user-$site-$date-backup.tar.gz"
+# in the case of all of a user's sites this will be the archive's filename
+tarfile_all="$userhome/$user-$date-backup.tar.gz"
+# If you are using notify(), this is destination email address 
+email="kbruder@cloudbrigade.com"
+# This is the body of the email
+# To omit set them to ""
+# Example: reminder=""
+notice="NOTICE - A backup was taken for user on:' `date` by `who`."
+reminder="REMINDER - Don't forget to remove old backups!"
+# If you are using aws_s3(), this is the bucket name and path
+s3_path="s3://scratchspacebackups/archive/"
+##### End custom variables ###################################################
+
+##### Begin main function ######################################################
+## Choose which functions you would like to run here ##
+## See the comments inside of the funtions for details
+# The recommended order is:
+# check_args
+# backup
+# show_complete
+# aws_s3
+# notify
 main() {
 	check_args
-	# Generate config lists for cmsdump and tar the site(s)
+	backup
+	show_complete
+	aws_s3
+	notify	
+}
+##### End main function #######################################################
+
+##### Begin functions #########################################################
+check_args() {
+# Check the arguments passed from the CLI
+	if (( $arg_count < 1 )); then
+		echo "You must supply at least one argument."
+		echo "Example for backing all of a user's sites:"
+		echo "cmsbacker user" 
+		echo "Example for backing one of a user's sites:"
+		echo "cmsbacker user www.example.com"
+		exit 3
+	fi
+	if [ ! -d $userhome ]; then
+        	echo "Customer $user not found!"
+        	exit 1
+	fi
+}
+backup() {
+	# If a site was specified use backup_site()
+	# If not use backup_all()
 	if (( $arg_count == 1 )); then
-		echo "Backing up all sites for $customer"
+		echo "Backing up all sites for $user"
 		backup_all
 	else
 		echo "Backing up $site only"
 		backup_site
 	fi
-	show_complete
-	echo "Would you like to copy the backup files to S3? (y,n):  "
-	read ans
-	if [ $ans == "y" ]; then
-		s3_cp
-	else
-		echo "Skipping S3, run the following command to copy the backup to S3:"
-		print_s3
-		exit 0
-	fi
 }
-check_args() {
-# Check the arguments passed from the CLI
-	if (( $arg_count < 1 )); then
-		echo "You must supply at least one argument."
-		echo "Example for backing all of a customer's sites:"
-		echo "cmsbacker user" 
-		echo "Example for backing one of a customer's sites:"
-		echo "cmsbacker user www.example.com"
-		exit 3
-	fi
-	if [ ! -d /users/$customer ]; then
-        	echo "Customer $customer not found!"
-        	exit 1
-	fi
-}
-
 backup_all() {
-	# If there was no specified site, then backup all sites
+	# Backup all sites
+	# Pass a list of configurations to dumpdb()
 	ls $sitesdir/*/configuration.php 2> /dev/null > $file1; ls $sitesdir/*/wp-config.php 2> /dev/null >> $file1
 	echo "Dumping Database..."
 	dump_db
+	# Move the databases to the user's sites directory to include then in the tar archive 
 	echo "Moving DB dump to $sitesdir..."
 	find /tmp -type f -ctime -1 -name "*.sql" -exec mv {} "$sitesdir"/ \;
+	# Tar the user's sites
 	echo "Tarring $sitesdir. Please be patient this can take a long time..."
 	/bin/tar cfpz $tarfile_all "$sitesdir" 2> /dev/null
 }
 backup_site() {
-	# If a site argument was passed then backup the site
-	# Check if the site exists in the customer's jail
+	# Backup the specified site
+	# Check if the site exists in the user's directory
 	if [ -d "$sitesdir"/"$site" ]; then
+		# If found pass the configuration to dump_db()
                 ls "$sitesdir"/"$site"/configuration.php 2> /dev/null > $file1; ls "$sitesdir"/"$site"/wp-config.php 2> /dev/null >> $file1
 		dump_db
+		# Move the database dump into the site file to include it in the tar archive
 		echo "moving DB dump to $sitesdir"/"$site"
 		find /tmp -type f -ctime -1 -name "*.sql" -exec mv {} "$sitesdir"/"$site"/ \;
+		# Tar the user's site directory
 		echo "Tarring $sitesdir/$site please be patient this can take a long time"
 		/bin/tar cfpz "$tarfile_site" "$sitesdir"/"$site" 2> /dev/null
         else
 		# If the site does not exist suggest one from ls
-                echo "The site, $site was not found for customer $customer"
+                echo "The site, $site was not found for user $user"
 		echo "Perhaps you meant one of these:"
 		ls $sitesdir	
                 exit 2
@@ -103,36 +146,55 @@ show_complete() {
 		ls -lah $tarfile_site
 	fi
 }
+aws_s3() {
+	# Prompt the user if they would like to copy the backups to AWS S3
+	# The server must have aws-cli installed and permissions to write to the bucket
+	echo "Would you like to copy the archive to S3? (y,n):  "
+	read ans
+	if [ $ans == "y" ]; then
+		s3_cp
+	else
+		echo "Skipping S3, run the following command to copy the backup to S3:"
+		print_s3
+		exit 0
+	fi
+}
 s3_cp() {
+	# Copy the tar archive to AWS S3
 	# Look for a full backup
 	if [ -f "$tarfile_all" ]; then
-		aws s3 cp "$tarfile_all" s3://scratchspacebackups/archive/
+		aws s3 cp "$tarfile_all" "$s3_path"
 	# Look for a single site backup
 	elif [ -f "$tarfile_site" ]; then
-		aws s3 cp "$tarfile_site" s3://scratchspacebackups/archive/ 
+		aws s3 cp "$tarfile_site" "$s3_path" 
 	else
 		echo "No tar file was found in $userhome"
 		exit 5
 	fi
 	if (( $? == 0 )); then
 			echo "Success!"
-			aws s3 ls s3://scratchspacebackups/archive/
+			aws s3 ls "$s3_path"
 		else
 			echo "There was an error copying the files to S3."
 			exit 4
 		fi
 }
 print_s3() {
+	# Print the command to copy the tar archive to AWS S3
+	# Look for a full backup
         if [ -f $tarfile_all ]; then
-               echo "aws s3 cp $tarfile_all s3://scratchspacebackups/archive/"
+               echo "aws s3 cp $tarfile_all $s3_path"
+	# Look for a single site backup
         elif [ -f $tarfile_site ]; then
-                echo "aws s3 cp "$tarfile_site" s3://scratchspacebackups/archive/"
+                echo "aws s3 cp $tarfile_site $s3_path"
         else
                 echo "There was an error! Please check your arguments and run the command again."
                 exit 6
         fi
 }
-reminder() {
-	echo "NOTICE - A final backup was taken for customer on:' `date` by `who`.  REMINDER - Be sure to remove any related Route 53 resources and remove the user and\/or site(s) from the Puppet configuration and do a final puppet run. See https://scratchspace.atlassian.net/wiki/spaces/ssadmin/pages/92766209/Decomission+shared+FS+site+user for details." | mail -s "NOTICE `who | cut -d'(' -f2 | cut -d')' -f1`" operations@scratchspace.com
+notify() {
+	# Send a notification email when the script completes
+	echo "$notice $reminder" | mail -s "NOTICE `who | cut -d'(' -f2 | cut -d')' -f1`" $email 
 }
+##### End functions ###########################################################
 main
