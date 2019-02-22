@@ -1,6 +1,6 @@
 #!/bin/bash
 # A bash script to replace old SSL files with new ones and push out a new configuration file
-# By kbruder@cloudbrigade.com
+# By kyle@kbruder.info
  
 # Declare variables here. You can skip a lot of the interaction by manually entering paths and
 # filenames here. Don't use trailing slashes
