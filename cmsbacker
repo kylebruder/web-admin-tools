@@ -1,7 +1,7 @@
 #!/bin/bash
-# A shell wrapper to use cmsdump.pl to do a final dump of an Apterburner user's site or sites.
-# By kbruder@cloudbrigade.com
-# Last modified 12/05/2018
+# A shell wrapper to use cmsdump.pl to back up a user's site or sites.
+# By kyle@kbruder.info
+# Last modified 02/23/2019
 
 ##### Begin Static variables ###################################################
 # Change these with caution
@@ -35,7 +35,7 @@ main() {
 	check_args
 	backup
 	show_complete
-	aws_s3
+	aws_s3		# Must have aws-cli installed and correct IAM permissions
 	notify	
 }
 ##### End main function #######################################################
